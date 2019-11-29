@@ -7,9 +7,9 @@ local math_round = math.round
 local Public = {}
 
 local function clean_table()
-	--Perform a table cleanup every 5000 boosts
+	--Perform a table cleanup every 1000 boosts
 	global.biter_health_boost_count = global.biter_health_boost_count + 1
-	if global.biter_health_boost_count % 5000 ~= 0 then return end
+	if global.biter_health_boost_count % 1000 ~= 0 then return end
 
 	local units_to_delete = {}
 	
@@ -71,7 +71,6 @@ end
 local function on_entity_damaged(event)
 	local biter = event.entity
 	if not (biter and biter.valid) then return end
-	if biter.force.index ~= 2 then return end
 	if biter.type ~= "unit" then return end
 
 	local biter_health_boost_units = global.biter_health_boost_units
@@ -102,9 +101,6 @@ local function on_entity_damaged(event)
 
 	--Proceed to kill entity if health is 0
 	if biter.health > 0 then return end
-
-	--Remove health pool
-	biter_health_boost_units[unit_number] = nil
 
 	if event.cause then
 		if event.cause.valid then

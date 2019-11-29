@@ -13,18 +13,19 @@ require "modules.mineable_wreckage_yields_scrap"
 require "modules.rocks_broken_paint_tiles"
 require "modules.rocks_heal_over_time"
 require "modules.rocks_yield_ore_veins"
-require "maps.mountain_fortress_v2.market"
 local level_depth = require "maps.mountain_fortress_v2.terrain"
+local Collapse = require "maps.mountain_fortress_v2.collapse"
 require "maps.mountain_fortress_v2.flamethrower_nerf"
 local BiterRolls = require "modules.wave_defense.biter_rolls"
+local BiterHealthBooster = require "modules.biter_health_booster"
 local Reset = require "functions.soft_reset"
 local Pets = require "modules.biter_pets"
 local Map = require "modules.map_info"
 local WD = require "modules.wave_defense.table"
 local Treasure = require "maps.mountain_fortress_v2.treasure"
-local Locomotive = require "maps.mountain_fortress_v2.locomotive".locomotive_spawn
+local Locomotive = require "maps.mountain_fortress_v2.locomotive"
 local Modifier = require "player_modifiers"
-
+local math_random = math.random
 local Public = {}
 
 local starting_items = {['pistol'] = 1, ['firearm-magazine'] = 16, ['rail'] = 16, ['wood'] = 16, ['explosives'] = 32}
@@ -34,15 +35,31 @@ local treasure_chest_messages = {
 	"We has found the precious!",
 }
 
+local function set_difficulty()
+	local wave_defense_table = WD.get_table()
+	local player_count = #game.connected_players
+
+	-- threat gain / wave
+	wave_defense_table.threat_gain_multiplier = 2 + player_count * 0.1
+	
+	--1 additional map collapse tile / 8 players in game
+	global.map_collapse.speed = math.floor(player_count * 0.125) + 1
+	
+	--20 Players for fastest wave_interval
+	wave_defense_table.wave_interval = 3600 - player_count * 90
+	if wave_defense_table.wave_interval < 1800 then wave_defense_table.wave_interval = 1800 end
+end
+
 function Public.reset_map()
 	local wave_defense_table = WD.get_table()
 	global.chunk_queue = {}
 	
+	if game.surfaces["cargo_wagon"] then game.delete_surface(game.surfaces["cargo_wagon"]) end
+	
 	local map_gen_settings = {
-		["seed"] = math.random(1, 1000000),
-		--["height"] = 256,
-		["width"] = 1536,
-		["water"] = 0.001,
+		["seed"] = math_random(1, 1000000),
+		["width"] = level_depth,
+		["water"] = 0.1,
 		["starting_area"] = 1,
 		["cliff_settings"] = {cliff_elevation_interval = 0, cliff_elevation_0 = 0},
 		["default_enable_all_autoplace_controls"] = true,
@@ -72,6 +89,7 @@ function Public.reset_map()
 		surface.force_generate_chunk_requests()
 	end
 	
+	game.difficulty_settings.technology_price_multiplier = 0.5 
 	game.map_settings.enemy_evolution.destroy_factor = 0
 	game.map_settings.enemy_evolution.pollution_factor = 0	
 	game.map_settings.enemy_evolution.time_factor = 0
@@ -82,11 +100,12 @@ function Public.reset_map()
 	game.map_settings.enemy_expansion.settler_group_min_size = 16
 	game.map_settings.pollution.enabled = false
 	
-	game.forces.player.technologies["landfill"].enabled = false
+	game.forces.player.technologies["land-mine"].enabled = false	
+	game.forces.player.technologies["landfill"].enabled = false	
 	game.forces.player.technologies["railway"].researched = true
 	game.forces.player.set_spawn_position({-2, 16}, surface)
 	
-	Locomotive(surface, {x = 0, y = 16})
+	Locomotive.locomotive_spawn(surface, {x = 0, y = 16})
 	
 	WD.reset_wave_defense()
 	wave_defense_table.surface_index = global.active_surface_index
@@ -94,7 +113,11 @@ function Public.reset_map()
 	wave_defense_table.nest_building_density = 32
 	wave_defense_table.game_lost = false
 	
+	Collapse.init()
+	
 	RPG.rpg_reset_all_players()
+	
+	set_difficulty()
 end
 
 local function protect_train(event)
@@ -108,38 +131,34 @@ local function protect_train(event)
 		event.entity.health = event.entity.health + event.final_damage_amount
 	end
 end
---[[
-local function neutral_force_player_damage_resistance(event)
-	if event.entity.force.index ~= 3 then return end  -- Neutral Force
-	if event.cause then
-		if event.cause.valid then
-			if event.cause.force.index == 2 then -- Enemy Force
-				return
-			end
-		end
-	end
-	if event.entity.health <= event.final_damage_amount then				
-		event.entity.die("neutral")
-		return
-	end
-	event.entity.health = event.entity.health + (event.final_damage_amount * 0.5)		
-end
-]]
+
 local function biters_chew_rocks_faster(event)
 	if event.entity.force.index ~= 3 then return end --Neutral Force
 	if not event.cause then return end
 	if not event.cause.valid then return end
 	if event.cause.force.index ~= 2 then return end --Enemy Force
-	--local bonus_damage = event.final_damage_amount * math.abs(wave_defense_table.threat) * 0.0002
 	event.entity.health = event.entity.health - event.final_damage_amount * 2.5
 end
 
 local function hidden_biter(entity)
-	BiterRolls.wave_defense_set_unit_raffle(math.sqrt(entity.position.x ^ 2 + entity.position.y ^ 2) * 0.25)
-	if math.random(1,3) == 1 then
-		entity.surface.create_entity({name = BiterRolls.wave_defense_roll_spitter_name(), position = entity.position})
+	local d = math.sqrt(entity.position.x ^ 2 + entity.position.y ^ 2)
+	
+	BiterRolls.wave_defense_set_unit_raffle(d * 0.25)
+	
+	local unit
+	if math_random(1,3) == 1 then
+		unit = entity.surface.create_entity({name = BiterRolls.wave_defense_roll_spitter_name(), position = entity.position})
 	else
-		entity.surface.create_entity({name = BiterRolls.wave_defense_roll_biter_name(), position = entity.position})
+		unit = entity.surface.create_entity({name = BiterRolls.wave_defense_roll_biter_name(), position = entity.position})
+	end
+	
+	local m = 1 / level_depth
+	m = m * d
+	
+	if math_random(1, 256) == 1 then
+		BiterHealthBooster.add_boss_unit(unit, m * 15 + 1, 0.38)
+	else
+		BiterHealthBooster.add_unit(unit, m * 2.5 + 1)
 	end
 end
 
@@ -149,10 +168,10 @@ local function hidden_worm(entity)
 end
 
 local function hidden_biter_pet(event)
-	if math.random(1, 2048) ~= 1 then return end
+	if math_random(1, 2048) ~= 1 then return end
 	BiterRolls.wave_defense_set_unit_raffle(math.sqrt(event.entity.position.x ^ 2 + event.entity.position.y ^ 2) * 0.25)
 	local unit
-	if math.random(1,3) == 1 then
+	if math_random(1,3) == 1 then
 		unit = event.entity.surface.create_entity({name = BiterRolls.wave_defense_roll_spitter_name(), position = event.entity.position})
 	else
 		unit = event.entity.surface.create_entity({name = BiterRolls.wave_defense_roll_biter_name(), position = event.entity.position})
@@ -161,8 +180,8 @@ local function hidden_biter_pet(event)
 end
 
 local function hidden_treasure(event)
-	if math.random(1, 320) ~= 1 then return end
-	game.players[event.player_index].print(treasure_chest_messages[math.random(1, #treasure_chest_messages)], {r=0.98, g=0.66, b=0.22})
+	if math_random(1, 320) ~= 1 then return end
+	game.players[event.player_index].print(treasure_chest_messages[math_random(1, #treasure_chest_messages)], {r=0.98, g=0.66, b=0.22})
 	Treasure(event.entity.surface, event.entity.position, "wooden-chest")
 end
 
@@ -170,19 +189,19 @@ local projectiles = {"grenade", "explosive-rocket", "grenade", "explosive-rocket
 local function angry_tree(entity, cause)	
 	if entity.type ~= "tree" then return end
 	if math.abs(entity.position.y) < level_depth then return end
-	if math.random(1,4) == 1 then hidden_biter(entity) end
-	if math.random(1,8) == 1 then hidden_worm(entity) end
-	if math.random(1,16) ~= 1 then return end
+	if math_random(1,4) == 1 then hidden_biter(entity) end
+	if math_random(1,8) == 1 then hidden_worm(entity) end
+	if math_random(1,16) ~= 1 then return end
 	local position = false
 	if cause then 
 		if cause.valid then
 			position = cause.position
 		end
 	end
-	if not position then position = {entity.position.x + (-20 + math.random(0, 40)), entity.position.y + (-20 + math.random(0, 40))} end
+	if not position then position = {entity.position.x + (-20 + math_random(0, 40)), entity.position.y + (-20 + math_random(0, 40))} end
 	
 	entity.surface.create_entity({
-		name = projectiles[math.random(1, 5)],
+		name = projectiles[math_random(1, 5)],
 		position = entity.position,
 		force = "neutral",
 		source = entity.position,
@@ -203,11 +222,11 @@ local function on_player_mined_entity(event)
 	if event.entity.type == "simple-entity" then
 		give_coin(game.players[event.player_index])
 		
-		if math.random(1,32) == 1 then
+		if math_random(1,32) == 1 then
 			hidden_biter(event.entity)
 			return
 		end
-		if math.random(1,512) == 1 then
+		if math_random(1,512) == 1 then
 			hidden_worm(event.entity)
 			return
 		end
@@ -242,11 +261,11 @@ local function on_entity_died(event)
 	if event.entity.force.index == 3 then
 		--local r_max = 15 - math.floor(math.abs(event.entity.position.y) / (level_depth * 0.5))
 		--if r_max < 3 then r_max = 3 end
-		if math.random(1,8) == 1 then
+		if math_random(1,8) == 1 then
 			hidden_biter(event.entity) 
 		end
 		
-		if math.random(1,256) == 1 then hidden_worm(event.entity) end
+		if math_random(1,256) == 1 then hidden_worm(event.entity) end
 		
 		angry_tree(event.entity, event.cause)
 	end
@@ -268,16 +287,8 @@ local function on_research_finished(event)
 	event.research.force.manual_mining_speed_modifier = mining_speed_bonus
 end
 
-local function set_difficulty()
-	local wave_defense_table = WD.get_table()
-
-	wave_defense_table.threat_gain_multiplier = 2 + #game.connected_players * 0.1
-	--20 Players for fastest wave_interval
-	wave_defense_table.wave_interval = 3600 - #game.connected_players * 90
-	if wave_defense_table.wave_interval < 1800 then wave_defense_table.wave_interval = 1800 end
-end
-
 local function on_player_joined_game(event)
+	local player_modifiers = Modifier.get_table()
 	local player = game.players[event.player_index]
 
 	set_difficulty()
@@ -285,28 +296,63 @@ local function on_player_joined_game(event)
 	local surface = game.surfaces[global.active_surface_index]
 	
 	if player.online_time == 0 then
-		player.teleport(surface.find_non_colliding_position("character", game.forces.player.get_spawn_position(surface), 3, 0.5), surface)
+		player.teleport(surface.find_non_colliding_position("character", game.forces.player.get_spawn_position(surface), 32, 0.5), surface)
 		for item, amount in pairs(starting_items) do
 			player.insert({name = item, count = amount})
 		end
 	end
 	
-	if player.surface.index ~= global.active_surface_index then
+	if player.surface.index ~= global.active_surface_index and player.surface.name ~= "cargo_wagon" then		
 		player.character = nil
 		player.set_controller({type=defines.controllers.god})
 		player.create_character()
-		player.teleport(surface.find_non_colliding_position("character", game.forces.player.get_spawn_position(surface), 3, 0.5), surface)
+		player.teleport(surface.find_non_colliding_position("character", game.forces.player.get_spawn_position(surface), 32, 0.5), surface)
 		for item, amount in pairs(starting_items) do
 			player.insert({name = item, count = amount})
-		end
+		end		
 	end
 
-	global.player_modifiers[player.index].character_mining_speed_modifier["mountain_fortress"] = 0.5
+	player_modifiers[player.index].character_mining_speed_modifier["mountain_fortress"] = 0.5
 	Modifier.update_player_modifiers(player)
+	
+	local tile = surface.get_tile(player.position)
+	if tile.valid then
+		if tile.name == "out-of-map" then
+			player.teleport(surface.find_non_colliding_position("character", game.forces.player.get_spawn_position(surface), 32, 0.5), surface)
+		end
+	end
 end
 
 local function on_player_left_game(event)
 	set_difficulty()
+end
+
+local function tick()
+	local tick = game.tick
+	if tick % 30 == 0 then	
+		if tick % 1800 == 0 then
+			Locomotive.set_player_spawn_and_refill_fish()
+			local surface = game.surfaces[global.active_surface_index]
+			local last_position = global.map_collapse.last_position
+			local position = surface.find_non_colliding_position("stone-furnace", {last_position.x, last_position.y - 32}, 128, 4)
+			if position then 
+				local wave_defense_table = WD.get_table()
+				wave_defense_table.spawn_position = position
+			end
+			--if tick % 216000 == 0 then
+			--	Collapse.delete_out_of_map_chunks(surface)
+			--end
+		end
+		if global.game_reset_tick then
+			if global.game_reset_tick < tick then
+				global.game_reset_tick = nil
+				require "maps.mountain_fortress_v2.main".reset_map()
+			end
+			return
+		end
+		Locomotive.fish_tag()
+	end
+	Collapse.process()
 end
 
 local function on_init()
@@ -319,6 +365,9 @@ local function on_init()
 		"This however will not be an easy task,\n",
 		"since their strength and numbers increase over time.\n",
 		"\n",
+		"In additon, the southern grounds collapse over time.\n",
+		"Stone bricks, concrete or other solid tiles, might improve the stability of the floor.\n",
+		"\n",
 		"Delve deep for greater treasures, but also face increased dangers.\n",
 		"Mining productivity research, will overhaul your mining equipment,\n",
 		"reinforcing your pickaxe as well as increasing the size of your backpack.\n",
@@ -326,6 +375,10 @@ local function on_init()
 		"As you dig, you will encounter impassable dark chasms or rivers.\n",
 		"Some explosives may cause parts of the ceiling to crumble, filling the void, creating new ways.\n",
 		"All they need is a container and a well aimed shot.\n",
+		"\n",
+		"You may find some supply goods, if you enter the wagon.",
+		"\n",
+		"Good luck on your journey!",
 	})
 	T.main_caption_color = {r = 150, g = 150, b = 0}
 	T.sub_caption_color = {r = 0, g = 150, b = 0}
@@ -345,14 +398,22 @@ local function on_init()
 	Public.reset_map()
 end
 
+local function on_player_driving_changed_state(event)
+	local player = game.players[event.player_index]
+	local vehicle = event.entity
+	Locomotive.enter_cargo_wagon(player, vehicle)
+end
+
 local event = require 'utils.event'
 event.on_init(on_init)
+event.on_nth_tick(2, tick)
 event.add(defines.events.on_entity_damaged, on_entity_damaged)
 event.add(defines.events.on_entity_died, on_entity_died)
 event.add(defines.events.on_player_joined_game, on_player_joined_game)
 event.add(defines.events.on_player_left_game, on_player_left_game)
 event.add(defines.events.on_player_mined_entity, on_player_mined_entity)
 event.add(defines.events.on_research_finished, on_research_finished)
+event.add(defines.events.on_player_driving_changed_state, on_player_driving_changed_state)
 
 require "modules.rocks_yield_ore"
 

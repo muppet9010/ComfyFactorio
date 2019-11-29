@@ -1,3 +1,4 @@
+local bb_config = require "maps.biter_battles_v2.config"
 local event = require 'utils.event'
 local Server = require 'utils.server'
 
@@ -7,8 +8,8 @@ local difficulties = {
 	[3] = {name = "Easy", str = "75%", value = 0.75, color = {r=0.00, g=0.25, b=0.00}, print_color = {r=0.00, g=0.5, b=0.00}},
 	[4] = {name = "Normal", str = "100%", value = 1, color = {r=0.00, g=0.00, b=0.25}, print_color = {r=0.0, g=0.0, b=0.7}},
 	[5] = {name = "Hard", str = "150%", value = 1.5, color = {r=0.25, g=0.00, b=0.00}, print_color = {r=0.5, g=0.0, b=0.00}},
-	[6] = {name = "Nightmare", str = "200%", value = 2, color = {r=0.35, g=0.00, b=0.00}, print_color = {r=0.7, g=0.0, b=0.00}},
-	[7] = {name = "Insane", str = "300%", value = 3, color = {r=0.45, g=0.00, b=0.00}, print_color = {r=0.9, g=0.0, b=0.00}}
+	[6] = {name = "Nightmare", str = "250%", value = 2.5, color = {r=0.35, g=0.00, b=0.00}, print_color = {r=0.7, g=0.0, b=0.00}},
+	[7] = {name = "Insane", str = "500%", value = 5, color = {r=0.45, g=0.00, b=0.00}, print_color = {r=0.9, g=0.0, b=0.00}}
 }
 
 local timeout = 18000
@@ -28,7 +29,7 @@ end
 local function poll_difficulty(player)
 	if player.gui.center["difficulty_poll"] then player.gui.center["difficulty_poll"].destroy() return end
 	
-	if bb_config.only_admins_vote then
+	if global.bb_settings.only_admins_vote or global.tournament_mode then
 		if not player.admin then return end
 	end
 	
@@ -85,7 +86,7 @@ local function on_player_joined_game(event)
 	local player = game.players[event.player_index]
 	if game.tick < timeout then
 		if not global.difficulty_player_votes[player.name] then
-			if bb_config.only_admins_vote then
+			if global.bb_settings.only_admins_vote or global.tournament_mode then
 				if player.admin then poll_difficulty(player) end
 			else
 				poll_difficulty(player)
@@ -119,7 +120,19 @@ local function on_gui_click(event)
 	if event.element.parent.name ~= "difficulty_poll" then return end
 	if event.element.name == "close" then event.element.parent.destroy() return end
 	if game.tick > timeout then event.element.parent.destroy() return end
-	local i = tonumber(event.element.name)	
+	local i = tonumber(event.element.name)
+	
+	if global.bb_settings.only_admins_vote or global.tournament_mode then
+		if player.admin then
+			game.print(player.name .. " has voted for " .. difficulties[i].name .. " difficulty!", difficulties[i].print_color)
+			global.difficulty_player_votes[player.name] = i
+			set_difficulty()
+			difficulty_gui()				
+		end
+		event.element.parent.destroy()
+		return
+	end
+	
 	game.print(player.name .. " has voted for " .. difficulties[i].name .. " difficulty!", difficulties[i].print_color)
 	global.difficulty_player_votes[player.name] = i
 	set_difficulty()

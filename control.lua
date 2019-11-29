@@ -60,6 +60,7 @@ require "modules.autostash"
 --require "modules.explosives"
 --require "modules.biter_pets"
 --require "modules.wave_defense.main"
+--require "modules.fjei.main"
 -----------------------------
 
 ---- enable maps here ----
@@ -69,6 +70,9 @@ require "modules.autostash"
 require "maps.mountain_fortress_v2.main"
 --require "maps.mountain_fortress"
 --require "maps.island_troopers.main"
+--require "maps.biter_hatchery.main"
+--require "maps.junkyard_pvp.main"
+--require "maps.scrapyard.main"
 --require "maps.tank_conquest.tank_conquest"
 --require "maps.territorial_control"
 --require "maps.cave_choppy.cave_miner"
